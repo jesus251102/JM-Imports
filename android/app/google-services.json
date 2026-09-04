@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "155170888230",
+    "project_id": "jm-imports-2ac55",
+    "storage_bucket": "jm-imports-2ac55.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:155170888230:android:6f6018f449a012308e24e7",
+        "android_client_info": {
+          "package_name": "com.jmimports.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "155170888230-f65bbl1nir72v990ssufc8jasa5q3jnn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDY0XlZ1B1zlfPQvqv9krFf9sDHXaolGlw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "155170888230-f65bbl1nir72v990ssufc8jasa5q3jnn.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

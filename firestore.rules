@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Función auxiliar para verificar autenticación activa
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Reglas para la colección de Clientes
+    match /clients/{clientId} {
+      allow read, create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    // Reglas para la colección de Reparaciones
+    match /repairs/{repairId} {
+      allow read, create, update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    // Reglas para la colección de Inventario / Repuestos
+    match /spare_parts/{partId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && request.resource.data.stock >= 0;
+      allow delete: if isAuthenticated();
+    }
+
+    // Reglas para la colección de Ventas (bloqueo de eliminación física)
+    match /sales/{saleId} {
+      allow read, create, update: if isAuthenticated();
+      allow delete: if false;
+    }
+  }
+}
+

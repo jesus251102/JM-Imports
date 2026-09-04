@@ -1,0 +1,47 @@
+name: jm_imports
+description: "Sistema de Gestión de Reparaciones e Inventario para JM Imports."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.6.1
+  go_router: ^17.5.0
+  google_fonts: ^8.2.1
+  firebase_core: ^4.13.0
+  cloud_firestore: ^6.8.0
+  firebase_auth: ^6.5.7
+  google_sign_in: ^6.2.2
+  local_auth: ^2.3.0
+  intl: ^0.20.3
+  fl_chart: ^1.2.0
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  url_launcher: ^6.3.1
+  shimmer: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/images/app_logo.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#081526"
+  adaptive_icon_foreground: "assets/images/app_logo.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/app_logo.png
