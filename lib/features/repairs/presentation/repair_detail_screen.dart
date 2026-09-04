@@ -1,24 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import 'package:jm_imports/core/services/ticket_pdf_service.dart';
 import 'package:jm_imports/core/services/whatsapp_service.dart';
 import 'package:jm_imports/core/theme/app_colors.dart';
 import 'package:jm_imports/core/theme/app_text_styles.dart';
+import 'package:jm_imports/core/utils/app_haptics.dart';
 import 'package:jm_imports/core/widgets/app_card.dart';
-import 'package:jm_imports/core/widgets/status_badge.dart';
+import 'package:jm_imports/core/widgets/app_toast.dart';
 import 'package:jm_imports/features/clients/domain/client.dart';
 import 'package:jm_imports/features/clients/presentation/client_form_dialog.dart';
 import 'package:jm_imports/features/clients/presentation/clients_provider.dart';
+import 'package:jm_imports/features/inventory/data/firestore_inventory_repository.dart';
+import 'package:jm_imports/features/inventory/presentation/inventory_provider.dart';
+import 'package:jm_imports/features/repairs/data/firestore_repairs_repository.dart';
 import 'package:jm_imports/features/repairs/domain/repair.dart';
 import 'package:jm_imports/features/repairs/domain/repair_status.dart';
 import 'package:jm_imports/features/repairs/presentation/repairs_provider.dart';
-import 'package:jm_imports/features/repairs/data/firestore_repairs_repository.dart';
-import 'package:jm_imports/features/inventory/presentation/inventory_provider.dart';
-import 'package:jm_imports/features/inventory/data/firestore_inventory_repository.dart';
-import 'package:jm_imports/core/widgets/app_toast.dart';
-import 'package:jm_imports/core/utils/app_haptics.dart';
 import 'package:jm_imports/features/repairs/presentation/status_change_sheet.dart';
 
 class RepairDetailScreen extends ConsumerStatefulWidget {
@@ -44,6 +46,45 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
   void dispose() {
     _notesController.dispose();
     super.dispose();
+  }
+
+  String _getInitials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return 'C';
+    if (parts.length == 1) {
+      return parts.first
+          .substring(0, parts.first.length.clamp(1, 2))
+          .toUpperCase();
+    }
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  Future<void> _makePhoneCall(String rawPhone) async {
+    final clean = rawPhone.replaceAll(RegExp(r'[^\d+]'), '');
+    if (clean.isEmpty) {
+      AppToast.show(
+        context,
+        message: 'El cliente no tiene un teléfono válido',
+        isError: true,
+      );
+      return;
+    }
+    final uri = Uri.parse('tel:$clean');
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      if (mounted) {
+        AppToast.show(
+          context,
+          message: 'No se pudo realizar la llamada: $e',
+          isError: true,
+        );
+      }
+    }
   }
 
   Future<void> _removeSparePart(Repair repair) async {
@@ -85,8 +126,7 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
         if (mounted) {
           AppToast.show(
             context,
-            message:
-                'Repuesto retirado de la reparación y devuelto al inventario',
+            message: 'Repuesto retirado y devuelto al inventario',
           );
         }
       } catch (e) {
@@ -119,10 +159,17 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           autofocus: true,
           style: AppTextStyles.bodyLarge,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Costo del Repuesto (S/)',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.monetization_on_outlined),
+            labelStyle: AppTextStyles.labelLarge.copyWith(
+              color: AppColors.accentLightBlue,
+              fontWeight: FontWeight.bold,
+            ),
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(
+              Icons.monetization_on_outlined,
+              color: AppColors.accentLightBlue,
+            ),
           ),
         ),
         actions: [
@@ -184,10 +231,14 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           autofocus: true,
           style: AppTextStyles.bodyLarge,
-          decoration: const InputDecoration(
-            labelText: 'Costo de Reparación / Presupuesto (S/)',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(
+          decoration: InputDecoration(
+            labelText: 'Costo de Reparación (S/)',
+            labelStyle: AppTextStyles.labelLarge.copyWith(
+              color: AppColors.accentLightBlue,
+              fontWeight: FontWeight.bold,
+            ),
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(
               Icons.attach_money_rounded,
               color: AppColors.primaryBlue,
             ),
@@ -237,7 +288,7 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
     }
   }
 
-  void _confirmDelete(BuildContext context, Repair repair) {
+  void _confirmDelete(Repair repair) {
     AppHaptics.warning();
     showDialog(
       context: context,
@@ -259,18 +310,12 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
               try {
                 await ref.read(repairsRepositoryProvider).delete(repair.id);
                 if (mounted) {
-                  AppToast.show(this.context, message: 'Reparación eliminada');
-                  if (this.context.mounted) {
-                    this.context.pop();
-                  }
+                  AppToast.show(context, message: 'Reparación eliminada');
+                  context.pop();
                 }
               } catch (e) {
                 if (mounted) {
-                  AppToast.show(
-                    this.context,
-                    message: 'Error: $e',
-                    isError: true,
-                  );
+                  AppToast.show(context, message: 'Error: $e', isError: true);
                 }
               }
             },
@@ -310,10 +355,17 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
             keyboardType: TextInputType.phone,
             autofocus: true,
             style: AppTextStyles.bodyLarge,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Número de WhatsApp',
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.phone_android_rounded),
+              labelStyle: AppTextStyles.labelLarge.copyWith(
+                color: AppColors.accentLightBlue,
+                fontWeight: FontWeight.bold,
+              ),
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(
+                Icons.phone_android_rounded,
+                color: AppColors.accentLightBlue,
+              ),
             ),
           ),
           actions: [
@@ -358,7 +410,7 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
       backgroundColor: AppColors.surfaceDark,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
         return DraggableScrollableSheet(
@@ -372,10 +424,19 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
                 final availableParts = parts.where((p) => p.stock > 0).toList();
                 return Column(
                   children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 8, bottom: 4),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                     Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Text(
-                        'Seleccionar repuesto',
+                        'Seleccionar repuesto del inventario',
                         style: AppTextStyles.titleLarge,
                       ),
                     ),
@@ -393,17 +454,43 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
                               itemBuilder: (context, index) {
                                 final part = availableParts[index];
                                 return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: AppColors.primaryBlue
+                                        .withValues(alpha: 0.15),
+                                    child: const Icon(
+                                      Icons.memory_rounded,
+                                      color: AppColors.accentLightBlue,
+                                      size: 20,
+                                    ),
+                                  ),
                                   title: Text(
                                     '${part.brand} ${part.model}',
                                     style: AppTextStyles.titleMedium,
                                   ),
                                   subtitle: Text(
-                                    'Calidad: ${part.quality} | Precio: S/ ${part.costPrice}',
-                                    style: AppTextStyles.bodyMedium,
+                                    'Calidad: ${part.quality} | Precio: S/ ${part.costPrice.toStringAsFixed(2)}',
+                                    style: AppTextStyles.bodyMedium.copyWith(
+                                      color: AppColors.textLightGray,
+                                    ),
                                   ),
-                                  trailing: Text(
-                                    'Stock: ${part.stock}',
-                                    style: AppTextStyles.labelLarge,
+                                  trailing: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.success.withValues(
+                                        alpha: 0.15,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      'Stock: ${part.stock}',
+                                      style: AppTextStyles.labelLarge.copyWith(
+                                        color: AppColors.success,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                   ),
                                   onTap: () async {
                                     final navigator = Navigator.of(context);
@@ -428,7 +515,9 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
                                       if (mounted) {
                                         messenger.showSnackBar(
                                           const SnackBar(
-                                            content: Text('Repuesto asignado'),
+                                            content: Text(
+                                              'Repuesto asignado correctamente',
+                                            ),
                                           ),
                                         );
                                       }
@@ -464,6 +553,7 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final repairsAsync = ref.watch(allRepairsStreamProvider);
+    final clientsAsync = ref.watch(clientsStreamProvider);
 
     return repairsAsync.when(
       data: (repairs) {
@@ -501,600 +591,707 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
           _notesController.text = repair.internalNotes;
         }
 
+        final clients = clientsAsync.value ?? [];
+        final client = clients.firstWhere(
+          (c) =>
+              c.id == repair.clientId ||
+              c.name.toLowerCase() == repair.clientName.toLowerCase(),
+          orElse: () => Client(
+            id: repair.clientId,
+            name: repair.clientName,
+            phone: '',
+            createdAt: DateTime.now(),
+          ),
+        );
+
         final dateFormat = DateFormat('dd/MM/yyyy HH:mm');
+        final netProfit = repair.repairCost - (repair.partCostPrice ?? 0);
 
         return Scaffold(
           backgroundColor: AppColors.backgroundDark,
           appBar: AppBar(
-            title: Text('Reparación', style: AppTextStyles.titleLarge),
+            backgroundColor: AppColors.backgroundDark,
+            elevation: 0,
+            title: Text(
+              'Ficha de Reparación',
+              style: AppTextStyles.titleLarge.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            centerTitle: true,
             actions: [
               IconButton(
                 icon: const Icon(
-                  Icons.picture_as_pdf_rounded,
-                  color: AppColors.accentLightBlue,
+                  Icons.delete_outline_rounded,
+                  color: AppColors.error,
                 ),
-                tooltip: 'Imprimir Ticket PDF',
-                onPressed: () => _generateTicket(repair),
-              ),
-              IconButton(
-                icon: const Icon(Icons.chat_rounded, color: AppColors.success),
-                tooltip: 'Enviar por WhatsApp',
-                onPressed: () => _sendWhatsApp(repair),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: AppColors.error),
-                onPressed: () => _confirmDelete(context, repair),
+                tooltip: 'Eliminar reparación',
+                onPressed: () => _confirmDelete(repair),
               ),
             ],
           ),
           body: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 12.0,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Quick Action Bar: PDF & WhatsApp
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceDark,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.divider),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () => _generateTicket(repair),
-                          icon: const Icon(
-                            Icons.picture_as_pdf_rounded,
-                            size: 18,
-                            color: Colors.white,
-                          ),
-                          label: const Text(
-                            'Ticket PDF',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.primaryBlue,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () => _sendWhatsApp(repair),
-                          icon: const Icon(
-                            Icons.chat_rounded,
-                            size: 18,
-                            color: Colors.white,
-                          ),
-                          label: const Text(
-                            'WhatsApp',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(
-                              0xFF25D366,
-                            ), // WhatsApp Green
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                // 1. Hero Device Header & Stepper
+                _buildHeroHeader(repair),
                 const SizedBox(height: 16),
 
-                // Header
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${repair.deviceBrand} ${repair.deviceModel}',
-                        style: AppTextStyles.headlineMedium,
-                      ),
-                    ),
-                    StatusBadge(
-                      label: repair.status.label,
-                      color: repair.status.color,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.edit_outlined),
-                      onPressed: () =>
-                          StatusChangeSheet.show(context, ref, repair),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
+                // 2. Stepper Timeline
+                _buildStatusStepper(repair),
+                const SizedBox(height: 20),
 
-                // Cliente
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Cliente', style: AppTextStyles.titleLarge),
-                    InkWell(
-                      onTap: () async {
-                        AppHaptics.selection();
-                        final clients =
-                            ref.read(clientsStreamProvider).value ?? [];
-                        final client = clients.firstWhere(
-                          (c) =>
-                              c.id == repair.clientId ||
-                              c.name.toLowerCase() ==
-                                  repair.clientName.toLowerCase(),
-                          orElse: () => Client(
-                            id: repair.clientId,
-                            name: repair.clientName,
-                            createdAt: DateTime.now(),
-                          ),
-                        );
-                        final updated = await ClientFormDialog.show(
-                          context,
-                          client: client,
-                        );
-                        if (updated == true && mounted) {
-                          AppToast.show(
-                            this.context,
-                            message: 'Cliente actualizado',
-                          );
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.edit_outlined,
-                              size: 16,
-                              color: AppColors.accentLightBlue,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Editar cliente',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.accentLightBlue,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.person_outline,
-                        size: 32,
-                        color: AppColors.primaryBlue,
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          repair.clientName,
-                          style: AppTextStyles.titleMedium,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
+                // 3. Action Toolbar Buttons
+                _buildQuickActionBar(repair, client),
+                const SizedBox(height: 20),
 
-                // Equipo
-                Text('Equipo', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildInfoRow('Marca:', repair.deviceBrand),
-                      const SizedBox(height: 8),
-                      _buildInfoRow('Modelo:', repair.deviceModel),
-                      if (repair.imei != null && repair.imei!.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        _buildInfoRow('IMEI:', repair.imei!),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
+                // 4. VIP Client Contact Card
+                _buildClientCard(repair, client),
+                const SizedBox(height: 20),
 
-                // Problema y Condición
-                Text('Problema reportado', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Text(
-                    repair.reportedProblem,
-                    style: AppTextStyles.bodyMedium,
-                  ),
-                ),
-                const SizedBox(height: 16),
+                // 5. Device Specs & Diagnosis Card
+                _buildDeviceSpecsCard(repair),
+                const SizedBox(height: 20),
 
-                Text('Condición de ingreso', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Text(
-                    repair.physicalCondition,
-                    style: AppTextStyles.bodyMedium,
-                  ),
-                ),
-                const SizedBox(height: 24),
+                // 6. Financial Profitability Card
+                _buildFinancialCard(repair, netProfit),
+                const SizedBox(height: 20),
 
-                // Notas Internas
-                Text('Notas internas', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextField(
-                        controller: _notesController,
-                        style: AppTextStyles.bodyMedium,
-                        maxLines: 3,
-                        decoration: InputDecoration(
-                          hintText:
-                              'Añadir notas internas (visibles solo para técnicos)...',
-                          hintStyle: AppTextStyles.bodyMedium.copyWith(
-                            color: AppColors.textLightGray.withValues(
-                              alpha: 0.5,
-                            ),
-                          ),
-                          border: InputBorder.none,
-                        ),
-                        onChanged: (val) {
-                          setState(() {
-                            _isNotesDirty = val != repair.internalNotes;
-                          });
-                        },
-                      ),
-                      if (_isNotesDirty)
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: FilledButton(
-                            onPressed: () async {
-                              final messenger = ScaffoldMessenger.of(context);
-                              try {
-                                await ref
-                                    .read(repairsRepositoryProvider)
-                                    .updateNotes(
-                                      repair.id,
-                                      _notesController.text,
-                                    );
-                                setState(() {
-                                  _isNotesDirty = false;
-                                });
-                                if (mounted) {
-                                  messenger.showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Notas guardadas'),
-                                    ),
-                                  );
-                                }
-                              } catch (e) {
-                                if (mounted) {
-                                  messenger.showSnackBar(
-                                    SnackBar(
-                                      content: Text('Error: $e'),
-                                      backgroundColor: AppColors.error,
-                                    ),
-                                  );
-                                }
-                              }
-                            },
-                            child: const Text('Guardar'),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
+                // 7. Spare Part Section
+                _buildSparePartCard(repair),
+                const SizedBox(height: 20),
 
-                // Repuesto Utilizado
-                Text('Repuesto utilizado', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child:
-                      (repair.partUsedId != null &&
-                          repair.partUsedId!.isNotEmpty &&
-                          repair.partUsedName != null &&
-                          repair.partUsedName!.isNotEmpty)
-                      ? Row(
-                          children: [
-                            const Icon(
-                              Icons.settings_suggest,
-                              color: AppColors.accentLightBlue,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    repair.partUsedName ?? 'Repuesto',
-                                    style: AppTextStyles.titleMedium,
-                                  ),
-                                  Text(
-                                    'Costo: S/ ${(repair.partCostPrice ?? 0).toStringAsFixed(2)}',
-                                    style: AppTextStyles.bodySmall.copyWith(
-                                      color: AppColors.textLightGray,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.edit_outlined,
-                                color: AppColors.accentLightBlue,
-                                size: 20,
-                              ),
-                              tooltip: 'Modificar costo del repuesto',
-                              onPressed: () => _editPartCostPrice(repair),
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.delete_outline_rounded,
-                                color: AppColors.error,
-                                size: 20,
-                              ),
-                              tooltip:
-                                  'Quitar repuesto y devolver al inventario',
-                              onPressed: () => _removeSparePart(repair),
-                            ),
-                          ],
-                        )
-                      : OutlinedButton.icon(
-                          onPressed: () => _selectSparePart(repair),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Seleccionar repuesto'),
-                        ),
-                ),
-                const SizedBox(height: 24),
+                // 8. Internal Notes Section
+                _buildNotesCard(repair),
+                const SizedBox(height: 20),
 
-                // Costos y Rentabilidad
-                Text('Costos & Utilidad', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Column(
-                    children: [
-                      // Cobrado al cliente
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.sell_rounded,
-                            size: 18,
-                            color: AppColors.primaryBlue,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Cobrado al cliente:',
-                              style: AppTextStyles.titleMedium,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          InkWell(
-                            onTap: () => _editRepairCost(repair),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 2,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'S/ ${repair.repairCost.toStringAsFixed(2)}',
-                                    style: AppTextStyles.titleMedium.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primaryBlue,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  const Icon(
-                                    Icons.edit_outlined,
-                                    size: 16,
-                                    color: AppColors.primaryBlue,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Costo repuesto comprado
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.shopping_bag_rounded,
-                            size: 18,
-                            color: AppColors.accentLightBlue,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Costo repuesto:',
-                              style: AppTextStyles.bodyMedium.copyWith(
-                                color: AppColors.textLightGray,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          InkWell(
-                            onTap: () => _editPartCostPrice(repair),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 5,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    (repair.partCostPrice != null &&
-                                        repair.partCostPrice! > 0)
-                                    ? AppColors.backgroundDark
-                                    : AppColors.accentLightBlue.withValues(
-                                        alpha: 0.15,
-                                      ),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color:
-                                      (repair.partCostPrice != null &&
-                                          repair.partCostPrice! > 0)
-                                      ? AppColors.divider
-                                      : AppColors.accentLightBlue.withValues(
-                                          alpha: 0.4,
-                                        ),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (repair.partCostPrice != null &&
-                                      repair.partCostPrice! > 0) ...[
-                                    Text(
-                                      'S/ ${repair.partCostPrice!.toStringAsFixed(2)}',
-                                      style: AppTextStyles.bodyMedium.copyWith(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Icon(
-                                      Icons.edit_outlined,
-                                      size: 14,
-                                      color: AppColors.accentLightBlue,
-                                    ),
-                                  ] else ...[
-                                    const Icon(
-                                      Icons.add,
-                                      size: 14,
-                                      color: AppColors.accentLightBlue,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      'Añadir costo',
-                                      style: AppTextStyles.bodySmall.copyWith(
-                                        color: AppColors.accentLightBlue,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 24),
-
-                      // Ganancia neta
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.trending_up_rounded,
-                            size: 18,
-                            color: AppColors.success,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Ganancia neta:',
-                              style: AppTextStyles.titleMedium.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            'S/ ${(repair.repairCost - (repair.partCostPrice ?? 0)).toStringAsFixed(2)}',
-                            style: AppTextStyles.titleLarge.copyWith(
-                              color: AppColors.success,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Fechas
-                Text('Fechas', style: AppTextStyles.titleLarge),
-                const SizedBox(height: 8),
-                AppCard(
-                  child: Column(
-                    children: [
-                      _buildInfoRow(
-                        'Ingreso:',
-                        dateFormat.format(repair.createdAt),
-                      ),
-                      const SizedBox(height: 8),
-                      _buildInfoRow(
-                        'Última act.:',
-                        dateFormat.format(repair.updatedAt),
-                      ),
-                      if (repair.deliveredAt != null) ...[
-                        const SizedBox(height: 8),
-                        _buildInfoRow(
-                          'Entregado:',
-                          dateFormat.format(repair.deliveredAt!),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
+                // 9. Timestamps Card
+                _buildAuditDatesCard(repair, dateFormat),
                 const SizedBox(height: 32),
               ],
             ),
           ),
         );
       },
-      loading: () =>
-          const Scaffold(body: Center(child: CircularProgressIndicator())),
+      loading: () => const Scaffold(
+        backgroundColor: AppColors.backgroundDark,
+        body: Center(child: CircularProgressIndicator()),
+      ),
       error: (e, s) => Scaffold(
+        backgroundColor: AppColors.backgroundDark,
         body: Center(child: Text('Error: $e', style: AppTextStyles.bodyMedium)),
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  // --- WIDGET COMPONENTS ---
+
+  Widget _buildHeroHeader(Repair repair) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.surfaceDark,
+            AppColors.primaryBlue.withValues(alpha: 0.15),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: AppColors.accentLightBlue.withValues(alpha: 0.3),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryBlue.withValues(alpha: 0.12),
+            blurRadius: 20,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.accentLightBlue.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppColors.accentLightBlue.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Text(
+                  'TICKET #${repair.id.substring(0, repair.id.length.clamp(0, 6)).toUpperCase()}',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.accentLightBlue,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: repair.status.color.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: repair.status.color),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      repair.status.icon,
+                      size: 14,
+                      color: repair.status.color,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      repair.status.label,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: repair.status.color,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '${repair.deviceBrand} ${repair.deviceModel}',
+            style: AppTextStyles.headlineMedium.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 26,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusStepper(Repair repair) {
+    final steps = RepairStatus.values;
+    final currentIndex = steps.indexOf(repair.status);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceDark,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.alt_route_rounded,
+                    color: AppColors.accentLightBlue,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Progreso de Reparación',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              InkWell(
+                onTap: () => StatusChangeSheet.show(context, ref, repair),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Cambiar',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.accentLightBlue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 18,
+                        color: AppColors.accentLightBlue,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: List.generate(steps.length, (index) {
+              final step = steps[index];
+              final isPassed = index <= currentIndex;
+              final isCurrent = index == currentIndex;
+              final isLast = index == steps.length - 1;
+
+              return Expanded(
+                child: InkWell(
+                  onTap: () => StatusChangeSheet.show(context, ref, repair),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isPassed
+                                  ? step.color
+                                  : AppColors.backgroundDark,
+                              border: Border.all(
+                                color: isPassed
+                                    ? step.color
+                                    : AppColors.divider,
+                                width: isCurrent ? 2.5 : 1.5,
+                              ),
+                              boxShadow: [
+                                if (isCurrent)
+                                  BoxShadow(
+                                    color: step.color.withValues(alpha: 0.5),
+                                    blurRadius: 8,
+                                    spreadRadius: 1,
+                                  ),
+                              ],
+                            ),
+                            child: Center(
+                              child: isPassed && !isCurrent
+                                  ? const Icon(
+                                      Icons.check_rounded,
+                                      size: 16,
+                                      color: Colors.white,
+                                    )
+                                  : isCurrent
+                                  ? Icon(
+                                      step.icon,
+                                      size: 14,
+                                      color: Colors.white,
+                                    )
+                                  : Text(
+                                      '${index + 1}',
+                                      style: AppTextStyles.bodySmall.copyWith(
+                                        fontSize: 11,
+                                        color: AppColors.textLightGray,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          if (!isLast)
+                            Expanded(
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 250),
+                                height: 3,
+                                color: index < currentIndex
+                                    ? step.color
+                                    : AppColors.divider.withValues(alpha: 0.4),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        step.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          fontSize: 10,
+                          fontWeight: isCurrent
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: isCurrent
+                              ? step.color
+                              : isPassed
+                              ? Colors.white
+                              : AppColors.textLightGray.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionBar(Repair repair, Client client) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Ticket PDF Button
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => _generateTicket(repair),
+            icon: const Icon(Icons.picture_as_pdf_rounded, size: 18),
+            label: const Text('Ticket PDF'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryBlue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              elevation: 2,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+
+        // WhatsApp Button
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => _sendWhatsApp(repair),
+            icon: const Icon(Icons.chat_rounded, size: 18),
+            label: const Text('WhatsApp'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF25D366),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              elevation: 2,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+
+        // Call Button
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surfaceDark,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.divider),
+          ),
+          child: IconButton(
+            icon: const Icon(
+              Icons.phone_rounded,
+              color: AppColors.accentLightBlue,
+            ),
+            tooltip: 'Llamar cliente',
+            onPressed: () => _makePhoneCall(client.phone),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClientCard(Repair repair, Client client) {
+    final initials = _getInitials(repair.clientName);
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.person_pin_rounded,
+                    color: AppColors.accentLightBlue,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Cliente VIP',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      color: AppColors.accentLightBlue,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              InkWell(
+                onTap: () async {
+                  AppHaptics.selection();
+                  final updated = await ClientFormDialog.show(
+                    context,
+                    client: client,
+                  );
+                  if (updated == true && mounted) {
+                    AppToast.show(
+                      context,
+                      message: 'Datos del cliente actualizados',
+                    );
+                  }
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.edit_outlined,
+                        size: 15,
+                        color: AppColors.accentLightBlue,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Editar',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.accentLightBlue,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: AppColors.primaryBlue,
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      repair.clientName,
+                      style: AppTextStyles.titleMedium.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      client.phone.isNotEmpty
+                          ? client.phone
+                          : 'Sin número registrado',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textLightGray,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (client.phone.isNotEmpty) ...[
+                IconButton(
+                  icon: const Icon(
+                    Icons.phone_outlined,
+                    color: AppColors.accentLightBlue,
+                    size: 20,
+                  ),
+                  onPressed: () => _makePhoneCall(client.phone),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.chat_bubble_outline,
+                    color: Color(0xFF25D366),
+                    size: 20,
+                  ),
+                  onPressed: () => _sendWhatsApp(repair),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeviceSpecsCard(Repair repair) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.smartphone_rounded,
+                color: AppColors.accentLightBlue,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Ficha Técnica del Equipo',
+                style: AppTextStyles.titleMedium.copyWith(
+                  color: AppColors.accentLightBlue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _buildSpecRow('Marca:', repair.deviceBrand),
+          const SizedBox(height: 8),
+          _buildSpecRow('Modelo:', repair.deviceModel),
+          if (repair.imei != null && repair.imei!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                SizedBox(
+                  width: 90,
+                  child: Text(
+                    'IMEI / Serie:',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      color: AppColors.textLightGray,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: SelectableText(
+                    repair.imei!,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.copy_rounded,
+                    size: 16,
+                    color: AppColors.accentLightBlue,
+                  ),
+                  tooltip: 'Copiar IMEI',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: repair.imei!));
+                    AppToast.show(
+                      context,
+                      message: 'IMEI copiado al portapapeles',
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+
+          // Problema Reportado Highlight Box
+          Text(
+            'Problema Reportado:',
+            style: AppTextStyles.labelLarge.copyWith(
+              color: AppColors.accentLightBlue,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.warning.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: AppColors.warning,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    repair.reportedProblem,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Condición de Ingreso Box
+          if (repair.physicalCondition.isNotEmpty) ...[
+            Text(
+              'Condición de Ingreso:',
+              style: AppTextStyles.labelLarge.copyWith(
+                color: AppColors.accentLightBlue,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.backgroundDark,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.divider),
+              ),
+              child: Text(
+                repair.physicalCondition,
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.textLightGray,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSpecRow(String label, String value) {
+    return Row(
       children: [
         SizedBox(
-          width: 100,
+          width: 90,
           child: Text(
             label,
             style: AppTextStyles.bodyMedium.copyWith(
@@ -1102,7 +1299,488 @@ class _RepairDetailScreenState extends ConsumerState<RepairDetailScreen> {
             ),
           ),
         ),
-        Expanded(child: Text(value, style: AppTextStyles.bodyMedium)),
+        Expanded(
+          child: Text(
+            value,
+            style: AppTextStyles.bodyMedium.copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFinancialCard(Repair repair, double netProfit) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.account_balance_wallet_rounded,
+                color: AppColors.accentLightBlue,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Panel Financiero & Rentabilidad',
+                style: AppTextStyles.titleMedium.copyWith(
+                  color: AppColors.accentLightBlue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              // Presupuesto Cobrado
+              Expanded(
+                child: InkWell(
+                  onTap: () => _editRepairCost(repair),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundDark,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppColors.primaryBlue.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Cobrado Cliente',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.accentLightBlue,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Spacer(),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 14,
+                              color: AppColors.primaryBlue,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'S/ ${repair.repairCost.toStringAsFixed(2)}',
+                          style: AppTextStyles.titleLarge.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // Costo Repuesto
+              Expanded(
+                child: InkWell(
+                  onTap: () => _editPartCostPrice(repair),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundDark,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.divider),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'Costo Repuesto',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textLightGray,
+                              ),
+                            ),
+                            const Spacer(),
+                            const Icon(
+                              Icons.edit_outlined,
+                              size: 14,
+                              color: AppColors.textLightGray,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'S/ ${(repair.partCostPrice ?? 0.0).toStringAsFixed(2)}',
+                          style: AppTextStyles.titleLarge.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Ganancia Neta Big Box
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.success.withValues(alpha: 0.2),
+                  AppColors.success.withValues(alpha: 0.05),
+                ],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppColors.success.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.success.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.trending_up_rounded,
+                    color: AppColors.success,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'GANANCIA NETA ESTIMADA',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'S/ ${netProfit.toStringAsFixed(2)}',
+                      style: AppTextStyles.headlineMedium.copyWith(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSparePartCard(Repair repair) {
+    final hasPart =
+        repair.partUsedId != null &&
+        repair.partUsedId!.isNotEmpty &&
+        repair.partUsedName != null &&
+        repair.partUsedName!.isNotEmpty;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.build_circle_outlined,
+                    color: AppColors.accentLightBlue,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Repuesto del Almacén',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      color: AppColors.accentLightBlue,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              if (hasPart)
+                IconButton(
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: AppColors.error,
+                    size: 20,
+                  ),
+                  tooltip: 'Quitar repuesto y devolver stock',
+                  onPressed: () => _removeSparePart(repair),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (hasPart)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.backgroundDark,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.accentLightBlue.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.settings_suggest_rounded,
+                    color: AppColors.accentLightBlue,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          repair.partUsedName ?? 'Repuesto',
+                          style: AppTextStyles.titleMedium.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Costo Repuesto: S/ ${(repair.partCostPrice ?? 0).toStringAsFixed(2)}',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textLightGray,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.edit_outlined,
+                      color: AppColors.accentLightBlue,
+                      size: 18,
+                    ),
+                    tooltip: 'Modificar costo',
+                    onPressed: () => _editPartCostPrice(repair),
+                  ),
+                ],
+              ),
+            )
+          else
+            OutlinedButton.icon(
+              onPressed: () => _selectSparePart(repair),
+              icon: const Icon(
+                Icons.add_rounded,
+                color: AppColors.accentLightBlue,
+              ),
+              label: Text(
+                'Seleccionar repuesto del inventario',
+                style: AppTextStyles.labelLarge.copyWith(
+                  color: AppColors.accentLightBlue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(
+                  color: AppColors.accentLightBlue.withValues(alpha: 0.4),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 16,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotesCard(Repair repair) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.note_alt_outlined,
+                color: AppColors.accentLightBlue,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Notas Internas del Técnico',
+                style: AppTextStyles.titleMedium.copyWith(
+                  color: AppColors.accentLightBlue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _notesController,
+            style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Escribe observaciones del diagnóstico técnico...',
+              hintStyle: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textLightGray.withValues(alpha: 0.5),
+              ),
+              filled: true,
+              fillColor: AppColors.backgroundDark,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.divider),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.divider),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: AppColors.accentLightBlue),
+              ),
+            ),
+            onChanged: (val) {
+              setState(() {
+                _isNotesDirty = val != repair.internalNotes;
+              });
+            },
+          ),
+          if (_isNotesDirty) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                onPressed: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    await ref
+                        .read(repairsRepositoryProvider)
+                        .updateNotes(repair.id, _notesController.text);
+                    setState(() {
+                      _isNotesDirty = false;
+                    });
+                    if (mounted) {
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text('Notas guardadas correctamente'),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text('Error: $e'),
+                          backgroundColor: AppColors.error,
+                        ),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.save_rounded, size: 16),
+                label: const Text('Guardar Notas'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primaryBlue,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAuditDatesCard(Repair repair, DateFormat dateFormat) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.history_rounded,
+                color: AppColors.accentLightBlue,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Historial & Fechas',
+                style: AppTextStyles.titleMedium.copyWith(
+                  color: AppColors.accentLightBlue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildAuditRow(
+            'Fecha de Ingreso:',
+            dateFormat.format(repair.createdAt),
+          ),
+          const SizedBox(height: 6),
+          _buildAuditRow(
+            'Última Actualización:',
+            dateFormat.format(repair.updatedAt),
+          ),
+          if (repair.deliveredAt != null) ...[
+            const SizedBox(height: 6),
+            _buildAuditRow(
+              'Fecha de Entrega:',
+              dateFormat.format(repair.deliveredAt!),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAuditRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: AppColors.textLightGray,
+          ),
+        ),
+        Text(
+          value,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }
